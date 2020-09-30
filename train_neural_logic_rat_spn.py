@@ -10,7 +10,7 @@ from train_rat_spn import make_parser, get_num_params
 from pyswip import *
 
 num_acc_check = 2
-threshold_acc_check = 10
+threshold_acc_check = 1
 
 
 def compute_performance(sess, data_x, data_labels, batch_size, spn):

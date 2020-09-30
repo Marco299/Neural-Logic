@@ -1,15 +1,13 @@
 import utils
-import json
 import os
 import sys
 import filelock
 import subprocess
 import time
 
-from run_rat_spn_mnist import structure_dict, param_configs, start_time, time_limit_seconds, dont_start_if_less_than_seconds
+from run_rat_spn_mnist import structure_dict, param_configs, start_time, time_limit_seconds, dont_start_if_less_than_seconds, num_epochs
 
 base_result_path = "results/neural/mnist/"
-num_epochs = 1
 
 
 def run():

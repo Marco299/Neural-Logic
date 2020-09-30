@@ -416,6 +416,7 @@ def run_training():
         iteration += 1
 
         if timeout_flag:
+            pickle.dump(results_dict, open(ARGS.result_path + '/results_history.pkl', "wb"))
             sys.exit(7)
 
     pickle.dump(results_dict, open(ARGS.result_path + '/results_history.pkl', "wb"))

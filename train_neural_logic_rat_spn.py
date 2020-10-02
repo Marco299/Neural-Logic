@@ -412,11 +412,11 @@ def run_training():
                     pickle.dump(results, open(ARGS.result_path + '/results.pkl', "wb"))
                     saver.save(sess, ARGS.result_path + "/checkpoints/model.ckpt", global_step=epoch_n, write_meta_graph=False)
 
+            if timeout_flag:
+                break
+        
         results_dict[iteration] = results
         iteration += 1
-
-        if timeout_flag:
-            break
 
     pickle.dump(results_dict, open(ARGS.result_path + '/results_history.pkl', "wb"))
 

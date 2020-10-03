@@ -199,6 +199,9 @@ def run_training():
 
         pseudolabels = check_prediction(train_labels, prediction, outputs)
 
+        if iteration > 1:
+            rat_spn = best_rat_spn
+
         ############
         # Training #
         ############
@@ -391,6 +394,7 @@ def run_training():
 
                         results['best_valid_acc'] = valid_ACC
                         results['epoch_best_valid_acc'] = epoch_n
+                        best_rat_spn = rat_spn
 
                 if ARGS.store_best_valid_loss and valid_x is not None:
                     if results['best_valid_loss'] is None or valid_loss < results['best_valid_loss']:
@@ -405,6 +409,7 @@ def run_training():
 
                         results['best_valid_loss'] = valid_loss
                         results['epoch_best_valid_loss'] = epoch_n
+                        best_rat_spn = rat_spn
 
                 if epoch_n % ARGS.store_model_every_epochs == 0 \
                         or epoch_n + 1 == ARGS.num_epochs \

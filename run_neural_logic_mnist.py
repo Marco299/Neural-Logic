@@ -21,10 +21,13 @@ def run():
         for structure_config in structure_dict[split_depth]:
             for config_dict in param_configs:
 
+
                 remaining_time = time_limit_seconds - (time.time() - start_time)
+                """
                 if remaining_time < dont_start_if_less_than_seconds:
                     print("Only {} seconds remaining, stop worker".format(remaining_time))
-                    # sys.exit(0)
+                    sys.exit(0)
+                """
 
                 cmd = "python -W ignore train_neural_logic_rat_spn.py --store_best_valid_loss --store_best_valid_acc --num_epochs {}".format(num_epochs)
                 cmd += " --timeout_seconds {}".format(remaining_time)

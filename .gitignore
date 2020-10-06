@@ -5,3 +5,4 @@ ratspn_venv/
 results/
 quick_results/
 scribble*.py
+*.txt

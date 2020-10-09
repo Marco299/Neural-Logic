@@ -108,28 +108,6 @@ def run_training():
     train_n = int(train_x.shape[0])
     num_dims = int(train_x.shape[1])
 
-    results_dict = {}
-    # stores evaluation metrics
-    results = {
-        'train_ACC': [],
-        'train_CE': [],
-        'train_LL': [],
-        'train_MARG': [],
-        'test_ACC': [],
-        'test_CE': [],
-        'test_LL': [],
-        'test_MARG': [],
-        'valid_ACC': [],
-        'valid_CE': [],
-        'valid_LL': [],
-        'valid_MARG': [],
-        'elapsed_wall_time_epoch': [],
-        'best_valid_acc': None,
-        'epoch_best_valid_acc': None,
-        'best_valid_loss': None,
-        'epoch_best_valid_loss': None
-    }
-
     # Make Region Graph
     region_graph = RegionGraph(range(0, num_dims), np.random.randint(0, 1000000000))
     for _ in range(0, ARGS.num_recursive_splits):
@@ -192,6 +170,7 @@ def run_training():
     prolog = Prolog()
     prolog.consult("abduction.pl")
 
+    results_dict = {}
     acc_history = []
     iteration = 1
 

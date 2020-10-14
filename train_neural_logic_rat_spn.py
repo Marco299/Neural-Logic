@@ -6,23 +6,14 @@ import tensorflow as tf
 import time
 from models.RegionGraph import RegionGraph
 from models.RatSpn import RatSpn
-from train_rat_spn import make_parser, get_num_params
+from train_rat_spn import make_parser, compute_performance, get_num_params
 from pyswip import *
 
-num_acc_check = 2
-threshold_acc_check = 1
 
-
-def compute_performance(sess, data_x, data_labels, batch_size, spn):
-    """Compute some performance measures, X-entropy, likelihood, number of correct samples."""
+def compute_prediction(sess, data_x, data_labels, batch_size, spn):
 
     num_batches = int(np.ceil(float(data_x.shape[0]) / float(batch_size)))
     test_idx = 0
-    num_correct_val = 0
-    CE_total = 0.0
-    ll = 0.0
-    margin = 0.0
-    objective = 0.0
     # ma modifica 10
     out_total = np.empty((0, 10))
     pred_total = np.array([])
@@ -41,31 +32,17 @@ def compute_performance(sess, data_x, data_labels, batch_size, spn):
         if spn.dropout_sums_placeholder is not None:
             feed_dict[spn.dropout_sums_placeholder] = 1.0
 
-        num_correct_tmp, CE_tmp, out_tmp, pred, ll_vals, margin_vals, objective_val = sess.run(
-            [spn.num_correct,
-             spn.cross_entropy,
-             spn.outputs,
-             spn.prediction,
-             spn.log_likelihood,
-             spn.log_margin_hinged,
-             spn.objective],
+        out_tmp, pred = sess.run(
+            [spn.outputs,
+             spn.prediction],
             feed_dict=feed_dict)
 
-        num_correct_val += num_correct_tmp
-        CE_total += np.sum(CE_tmp)
-        ll += np.sum(ll_vals)
-        margin += np.sum(margin_vals)
-        objective += objective_val * batch_data.shape[0]
         out_total = np.append(out_total, out_tmp, 0)
         pred_total = np.append(pred_total, pred, 0)
 
         test_idx += batch_size
 
-    ll = ll / float(data_x.shape[0])
-    margin = margin / float(data_x.shape[0])
-    objective = objective / float(data_x.shape[0])
-
-    return num_correct_val, CE_total, ll, out_total, pred_total, margin, objective
+    return out_total, pred_total
 
 
 def run_training():
@@ -108,6 +85,27 @@ def run_training():
     train_n = int(train_x.shape[0])
     num_dims = int(train_x.shape[1])
 
+    # stores evaluation metrics
+    results = {
+        'train_ACC': [],
+        'train_CE': [],
+        'train_LL': [],
+        'train_MARG': [],
+        'test_ACC': [],
+        'test_CE': [],
+        'test_LL': [],
+        'test_MARG': [],
+        'valid_ACC': [],
+        'valid_CE': [],
+        'valid_LL': [],
+        'valid_MARG': [],
+        'elapsed_wall_time_epoch': [],
+        'best_valid_acc': None,
+        'epoch_best_valid_acc': None,
+        'best_valid_loss': None,
+        'epoch_best_valid_loss': None
+    }
+
     # Make Region Graph
     region_graph = RegionGraph(range(0, num_dims), np.random.randint(0, 1000000000))
     for _ in range(0, ARGS.num_recursive_splits):
@@ -149,270 +147,209 @@ def run_training():
     # print("num params: {}".format(get_num_params()))
     print("start training")
 
-    ################
-    ### Evaluate ###
-    ################
-    num_correct_train, CE_total, train_LL, outputs, prediction, train_MARG, _ = compute_performance(
-        sess,
-        train_x,
-        train_labels,
-        100,
-        rat_spn)
-    train_ACC = 100. * float(num_correct_train) / float(train_x.shape[0])
-    train_CE = CE_total / float(train_x.shape[0])
-    print('   ###')
-    print('   ### accuracy on train set = {}   CE = {}   LL: {}   negmargin: {}'.format(
-        train_ACC,
-        train_CE,
-        train_LL,
-        train_MARG))
-
     prolog = Prolog()
     prolog.consult("abduction.pl")
 
-    results_dict = {}
-    acc_history = []
-    iteration = 1
+    ############
+    # Training #
+    ############
 
-    while check_acc_variation(acc_history):
+    epoch_elapsed_times = []
+    batches_per_epoch = int(np.ceil(float(train_n) / float(ARGS.batch_size)))
 
-        pseudolabels = check_prediction(train_labels, prediction, outputs)
+    for epoch_n in range(0, ARGS.num_epochs):
 
-        if iteration > 1:
-            rat_spn = best_rat_spn
+        epoch_start_time = time.time()
+        rp = np.random.permutation(train_n)
 
-        ############
-        # Training #
-        ############
-
-        # stores evaluation metrics
-        results = {
-            'train_ACC': [],
-            'train_CE': [],
-            'train_LL': [],
-            'train_MARG': [],
-            'test_ACC': [],
-            'test_CE': [],
-            'test_LL': [],
-            'test_MARG': [],
-            'valid_ACC': [],
-            'valid_CE': [],
-            'valid_LL': [],
-            'valid_MARG': [],
-            'elapsed_wall_time_epoch': [],
-            'best_valid_acc': None,
-            'epoch_best_valid_acc': None,
-            'best_valid_loss': None,
-            'epoch_best_valid_loss': None
-        }
-
-        epoch_elapsed_times = []
-        batches_per_epoch = int(np.ceil(float(train_n) / float(ARGS.batch_size)))
-
-        for epoch_n in range(0, ARGS.num_epochs):
-
-            epoch_start_time = time.time()
-            rp = np.random.permutation(train_n)
-
-            batch_start_idx = 0
-            elapsed_wall_time_epoch = 0.0
-            for batch_n in range(0, batches_per_epoch):
-                if batch_n + 1 < batches_per_epoch:
-                    cur_idx = rp[batch_start_idx:batch_start_idx + ARGS.batch_size]
-                else:
-                    cur_idx = rp[batch_start_idx:]
-                batch_start_idx += ARGS.batch_size
-
-                feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels[cur_idx]}
-
-                if ARGS.dropout_rate_input is not None:
-                    feed_dict[rat_spn.dropout_input_placeholder] = ARGS.dropout_rate_input
-                if ARGS.dropout_rate_sums is not None:
-                    feed_dict[rat_spn.dropout_sums_placeholder] = ARGS.dropout_rate_sums
-
-                start_time = time.time()
-                if ARGS.optimizer == "em":
-                    one_hot_labels = -np.inf * np.ones((len(cur_idx), num_classes))
-                    one_hot_labels[range(len(cur_idx)), [int(x) for x in pseudolabels[cur_idx]]] = 0.0
-                    feed_dict[rat_spn.EM_deriv_input_pl] = one_hot_labels
-
-                    start_time = time.time()
-                    sess.run(rat_spn.em_update_accums, feed_dict=feed_dict)
-                    elapsed_wall_time_epoch += (time.time() - start_time)
-                else:
-                    _, CEM_value, cur_lr, loss_val, ll_mean_val, margin_val = \
-                        sess.run([
-                            rat_spn.train_op,
-                            rat_spn.cross_entropy_mean,
-                            rat_spn.learning_rate,
-                            rat_spn.objective,
-                            rat_spn.neg_norm_ll,
-                            rat_spn.neg_margin_objective], feed_dict=feed_dict)
-                    elapsed_wall_time_epoch += (time.time() - start_time)
-
-                    """if batch_n % 10 == 1:
-                        print(
-                            "epoch: {}[{}, {:.5f}]   CE: {:.5f}   nll: {:.5f}   negmargin: {:.5f}   loss: {:.5f}   time: {:.5f}".format(
-                                epoch_n,
-                                batch_n,
-                                cur_lr,
-                                CEM_value,
-                                ll_mean_val,
-                                margin_val,
-                                loss_val,
-                                elapsed_wall_time_epoch))"""
-
-            if ARGS.optimizer == "em":
-                sess.run(rat_spn.em_update_params)
-                sess.run(rat_spn.em_reset_accums)
+        batch_start_idx = 0
+        elapsed_wall_time_epoch = 0.0
+        for batch_n in range(0, batches_per_epoch):
+            if batch_n + 1 < batches_per_epoch:
+                cur_idx = rp[batch_start_idx:batch_start_idx + ARGS.batch_size]
             else:
-                sess.run(rat_spn.decrease_lr_op)
+                cur_idx = rp[batch_start_idx:]
+            batch_start_idx += ARGS.batch_size
 
-            ################
-            ### Evaluate ###
-            ################
-            print('')
-            print('ITERATION', iteration)
-            print('epoch {}'.format(epoch_n))
-
-            num_correct_train, CE_total, train_LL, outputs, prediction, train_MARG, train_loss = compute_performance(
+            outputs, prediction = compute_prediction(
                 sess,
-                train_x,
-                train_labels,
+                train_x[cur_idx, :],
+                train_labels[cur_idx],
                 100,
                 rat_spn)
-            train_ACC = 100. * float(num_correct_train) / float(train_x.shape[0])
-            train_CE = CE_total / float(train_x.shape[0])
-            print('   ###')
-            print('   ### accuracy on train set = {}   CE = {}   LL: {}   negmargin: {}'.format(
-                train_ACC,
-                train_CE,
-                train_LL,
-                train_MARG))
 
-            if test_x is not None:
-                num_correct_test, CE_total, test_LL, _, _, test_MARG, test_loss = compute_performance(
-                    sess,
-                    test_x,
-                    test_labels,
-                    100,
-                    rat_spn)
-                test_ACC = 100. * float(num_correct_test) / float(test_x.shape[0])
-                test_CE = CE_total / float(test_x.shape[0])
-                print('   ###')
-                print('   ### accuracy on test set = {}   CE = {}   LL: {}   negmargin: {}'.format(test_ACC, test_CE, test_LL,
-                                                                                                   test_MARG))
+            pseudolabels = check_prediction(train_labels[cur_idx], prediction, outputs)
+            feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels}
+
+            if ARGS.dropout_rate_input is not None:
+                feed_dict[rat_spn.dropout_input_placeholder] = ARGS.dropout_rate_input
+            if ARGS.dropout_rate_sums is not None:
+                feed_dict[rat_spn.dropout_sums_placeholder] = ARGS.dropout_rate_sums
+
+            start_time = time.time()
+            if ARGS.optimizer == "em":
+                one_hot_labels = -np.inf * np.ones((len(cur_idx), num_classes))
+                one_hot_labels[range(len(cur_idx)), [int(x) for x in pseudolabels]] = 0.0
+                feed_dict[rat_spn.EM_deriv_input_pl] = one_hot_labels
+
+                start_time = time.time()
+                sess.run(rat_spn.em_update_accums, feed_dict=feed_dict)
+                elapsed_wall_time_epoch += (time.time() - start_time)
             else:
-                test_ACC = None
-                test_CE = None
-                test_LL = None
+                _, CEM_value, cur_lr, loss_val, ll_mean_val, margin_val = \
+                    sess.run([
+                        rat_spn.train_op,
+                        rat_spn.cross_entropy_mean,
+                        rat_spn.learning_rate,
+                        rat_spn.objective,
+                        rat_spn.neg_norm_ll,
+                        rat_spn.neg_margin_objective], feed_dict=feed_dict)
+                elapsed_wall_time_epoch += (time.time() - start_time)
 
-            if valid_x is not None:
-                num_correct_valid, CE_total, valid_LL, _, _, valid_MARG, valid_loss = compute_performance(
-                    sess,
-                    valid_x,
-                    valid_labels,
-                    100,
-                    rat_spn)
-                valid_ACC = 100. * float(num_correct_valid) / float(valid_x.shape[0])
-                valid_CE = CE_total / float(valid_x.shape[0])
-                print('   ###')
-                print('   ### accuracy on valid set = {}   CE = {}   LL: {}   margin: {}'.format(
-                    valid_ACC,
-                    valid_CE,
-                    valid_LL,
-                    valid_MARG))
-            else:
-                valid_ACC = None
-                valid_CE = None
-                valid_LL = None
+                """
+                if batch_n % 10 == 1:
+                    print(
+                        "epoch: {}[{}, {:.5f}]   CE: {:.5f}   nll: {:.5f}   negmargin: {:.5f}   loss: {:.5f}   time: {:.5f}".format(
+                            epoch_n,
+                            batch_n,
+                            cur_lr,
+                            CEM_value,
+                            ll_mean_val,
+                            margin_val,
+                            loss_val,
+                            elapsed_wall_time_epoch))
+                """
 
+        if ARGS.optimizer == "em":
+            sess.run(rat_spn.em_update_params)
+            sess.run(rat_spn.em_reset_accums)
+        else:
+            sess.run(rat_spn.decrease_lr_op)
+
+        ################
+        ### Evaluate ###
+        ################
+        print('')
+        print('epoch {}'.format(epoch_n))
+
+        num_correct_train, CE_total, train_LL, train_MARG, train_loss = compute_performance(
+            sess,
+            train_x,
+            train_labels,
+            100,
+            rat_spn)
+        train_ACC = 100. * float(num_correct_train) / float(train_x.shape[0])
+        train_CE = CE_total / float(train_x.shape[0])
+        print('   ###')
+        print('   ### accuracy on train set = {}   CE = {}   LL: {}   negmargin: {}'.format(
+            train_ACC,
+            train_CE,
+            train_LL,
+            train_MARG))
+
+        if test_x is not None:
+            num_correct_test, CE_total, test_LL, test_MARG, test_loss = compute_performance(
+                sess,
+                test_x,
+                test_labels,
+                100,
+                rat_spn)
+            test_ACC = 100. * float(num_correct_test) / float(test_x.shape[0])
+            test_CE = CE_total / float(test_x.shape[0])
             print('   ###')
-            print('')
+            print(
+                '   ### accuracy on test set = {}   CE = {}   LL: {}   negmargin: {}'.format(test_ACC, test_CE, test_LL,
+                                                                                             test_MARG))
+        else:
+            test_ACC = None
+            test_CE = None
+            test_LL = None
 
-            ##############
-            ### timing ###
-            ##############
-            epoch_elapsed_times.append(time.time() - epoch_start_time)
-            estimated_next_epoch_time = np.mean(epoch_elapsed_times) + 3 * np.std(epoch_elapsed_times)
-            remaining_time = ARGS.timeout_seconds - (time.time() - training_start_time)
-            if estimated_next_epoch_time + ARGS.timeout_safety_seconds > remaining_time:
-                print("Next epoch might exceed time limit, stop.")
-                timeout_flag = True
+        if valid_x is not None:
+            num_correct_valid, CE_total, valid_LL, valid_MARG, valid_loss = compute_performance(
+                sess,
+                valid_x,
+                valid_labels,
+                100,
+                rat_spn)
+            valid_ACC = 100. * float(num_correct_valid) / float(valid_x.shape[0])
+            valid_CE = CE_total / float(valid_x.shape[0])
+            print('   ###')
+            print('   ### accuracy on valid set = {}   CE = {}   LL: {}   margin: {}'.format(
+                valid_ACC,
+                valid_CE,
+                valid_LL,
+                valid_MARG))
+        else:
+            valid_ACC = None
+            valid_CE = None
+            valid_LL = None
 
-            if not ARGS.no_save:
-                results['train_ACC'].append(train_ACC)
-                results['train_CE'].append(train_CE)
-                results['train_LL'].append(train_LL)
-                results['train_MARG'].append(train_LL)
-                results['test_ACC'].append(test_ACC)
-                results['test_CE'].append(test_CE)
-                results['test_LL'].append(test_LL)
-                results['test_MARG'].append(train_LL)
-                results['valid_ACC'].append(valid_ACC)
-                results['valid_CE'].append(valid_CE)
-                results['valid_LL'].append(valid_LL)
-                results['valid_MARG'].append(train_LL)
-                results['elapsed_wall_time_epoch'].append(elapsed_wall_time_epoch)
+        print('   ###')
+        print('')
 
-                if ARGS.store_best_valid_acc and valid_x is not None:
-                    if results['best_valid_acc'] is None or valid_ACC > results['best_valid_acc']:
-                        print('Better validation accuracy -> save model')
-                        print('')
+        ##############
+        ### timing ###
+        ##############
+        epoch_elapsed_times.append(time.time() - epoch_start_time)
+        estimated_next_epoch_time = np.mean(epoch_elapsed_times) + 3 * np.std(epoch_elapsed_times)
+        remaining_time = ARGS.timeout_seconds - (time.time() - training_start_time)
+        if estimated_next_epoch_time + ARGS.timeout_safety_seconds > remaining_time:
+            print("Next epoch might exceed time limit, stop.")
+            timeout_flag = True
 
-                        best_valid_acc_saver.save(
-                            sess,
-                            ARGS.result_path + "/best_valid_acc/model.ckpt",
-                            global_step=epoch_n,
-                            write_meta_graph=False)
+        if not ARGS.no_save:
+            results['train_ACC'].append(train_ACC)
+            results['train_CE'].append(train_CE)
+            results['train_LL'].append(train_LL)
+            results['train_MARG'].append(train_LL)
+            results['test_ACC'].append(test_ACC)
+            results['test_CE'].append(test_CE)
+            results['test_LL'].append(test_LL)
+            results['test_MARG'].append(train_LL)
+            results['valid_ACC'].append(valid_ACC)
+            results['valid_CE'].append(valid_CE)
+            results['valid_LL'].append(valid_LL)
+            results['valid_MARG'].append(train_LL)
+            results['elapsed_wall_time_epoch'].append(elapsed_wall_time_epoch)
 
-                        if results['best_valid_acc'] is None:
-                            acc_history.append(valid_ACC)
-                        else:
-                            acc_history[iteration-1] = valid_ACC
+            if ARGS.store_best_valid_acc and valid_x is not None:
+                if results['best_valid_acc'] is None or valid_ACC > results['best_valid_acc']:
+                    print('Better validation accuracy -> save model')
+                    print('')
 
-                        results['best_valid_acc'] = valid_ACC
-                        results['epoch_best_valid_acc'] = epoch_n
-                        best_rat_spn = rat_spn
+                    best_valid_acc_saver.save(
+                        sess,
+                        ARGS.result_path + "/best_valid_acc/model.ckpt",
+                        global_step=epoch_n,
+                        write_meta_graph=False)
 
-                if ARGS.store_best_valid_loss and valid_x is not None:
-                    if results['best_valid_loss'] is None or valid_loss < results['best_valid_loss']:
-                        print('Better validation loss -> save model')
-                        print('')
+                    results['best_valid_acc'] = valid_ACC
+                    results['epoch_best_valid_acc'] = epoch_n
 
-                        best_valid_loss_saver.save(
-                            sess,
-                            ARGS.result_path + "/best_valid_loss/model.ckpt",
-                            global_step=epoch_n,
-                            write_meta_graph=False)
+            if ARGS.store_best_valid_loss and valid_x is not None:
+                if results['best_valid_loss'] is None or valid_loss < results['best_valid_loss']:
+                    print('Better validation loss -> save model')
+                    print('')
 
-                        results['best_valid_loss'] = valid_loss
-                        results['epoch_best_valid_loss'] = epoch_n
-                        best_rat_spn = rat_spn
+                    best_valid_loss_saver.save(
+                        sess,
+                        ARGS.result_path + "/best_valid_loss/model.ckpt",
+                        global_step=epoch_n,
+                        write_meta_graph=False)
 
-                if epoch_n % ARGS.store_model_every_epochs == 0 \
-                        or epoch_n + 1 == ARGS.num_epochs \
-                        or timeout_flag:
-                    pickle.dump(results, open(ARGS.result_path + '/results.pkl', "wb"))
-                    saver.save(sess, ARGS.result_path + "/checkpoints/model.ckpt", global_step=epoch_n, write_meta_graph=False)
+                    results['best_valid_loss'] = valid_loss
+                    results['epoch_best_valid_loss'] = epoch_n
 
-            if timeout_flag:
-                break
-        
-        results_dict[iteration] = results
-        iteration += 1
+            if epoch_n % ARGS.store_model_every_epochs == 0 \
+                    or epoch_n + 1 == ARGS.num_epochs \
+                    or timeout_flag:
+                pickle.dump(results, open(ARGS.result_path + '/results.pkl', "wb"))
+                saver.save(sess, ARGS.result_path + "/checkpoints/model.ckpt", global_step=epoch_n,
+                           write_meta_graph=False)
 
-    pickle.dump(results_dict, open(ARGS.result_path + '/results_history.pkl', "wb"))
-
-
-def check_acc_variation(acc_history):
-    if len(acc_history) <= num_acc_check:
-        return True
-
-    if acc_history[-1] - acc_history[-num_acc_check-1] <= threshold_acc_check:
-        return False
-    else:
-        return True
+        if timeout_flag:
+            sys.exit(7)
 
 
 def check_prediction(train_labels, prediction, outputs):
@@ -449,8 +386,7 @@ def check_prediction(train_labels, prediction, outputs):
                 pseudolabels = np.append(pseudolabels, best_abduction, 0)
             else:
                 # correct sum
-                pseudolabels = np.append(pseudolabels, [previous_pred_elem], 0)
-                pseudolabels = np.append(pseudolabels, [pred_elem], 0)
+                pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
 
             couple_sum_real = None
 

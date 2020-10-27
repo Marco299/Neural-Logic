@@ -6,7 +6,7 @@ import tensorflow as tf
 import time
 from models.RegionGraph import RegionGraph
 from models.RatSpn import RatSpn
-from train_rat_spn import make_parser, compute_performance, get_num_params
+from train_rat_spn import make_parser, compute_performance
 from pyswip import *
 
 
@@ -144,7 +144,6 @@ def run_training():
         print("")
 
     # print(rat_spn)
-    # print("num params: {}".format(get_num_params()))
     print("start training")
 
     prolog = Prolog()
@@ -352,14 +351,15 @@ def run_training():
             sys.exit(7)
 
 
-def check_prediction(train_labels, prediction, outputs):
+def check_prediction(train_labels, prediction, outputs, symbolic_module=True):
     previous_pred_elem = None
     couple_sum_real = None
     pseudolabels = np.array([])
 
-    add = Functor("add", 3)
-    x = Variable()
-    y = Variable()
+    if symbolic_module:
+        add = Functor("add", 3)
+        x = Variable()
+        y = Variable()
 
     for real_elem, pred_elem, output in zip(train_labels, prediction, outputs):
         if couple_sum_real is None:
@@ -368,25 +368,46 @@ def check_prediction(train_labels, prediction, outputs):
         else:
             couple_sum_real += real_elem
 
-            # call symbolic module to check prediction correctness
-            q = Query(add(int(previous_pred_elem), int(pred_elem), int(couple_sum_real)))
-            pred_correctness = q.nextSolution()
-            q.closeQuery()
-
-            if not pred_correctness:
-                # wrong sum
-                q = Query(add(x, y, int(couple_sum_real)))
-                best_prob = None
-                while q.nextSolution():
-                    abduction_prob = output[x.value] + output[y.value]
-                    if best_prob is None or abduction_prob > best_prob:
-                        best_prob = abduction_prob
-                        best_abduction = [x.value, y.value]
+            if symbolic_module:
+                # call symbolic module to check prediction correctness
+                q = Query(add(int(previous_pred_elem), int(pred_elem), int(couple_sum_real)))
+                pred_correctness = q.nextSolution()
                 q.closeQuery()
-                pseudolabels = np.append(pseudolabels, best_abduction, 0)
+
+                if not pred_correctness:
+                    # wrong sum
+                    q = Query(add(x, y, int(couple_sum_real)))
+                    best_prob = None
+                    while q.nextSolution():
+                        abduction_prob = output[x.value] + output[y.value]
+                        if best_prob is None or abduction_prob > best_prob:
+                            best_prob = abduction_prob
+                            best_abduction = [x.value, y.value]
+                    q.closeQuery()
+                    pseudolabels = np.append(pseudolabels, best_abduction, 0)
+                else:
+                    # correct sum
+                    pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
+
             else:
-                # correct sum
-                pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
+                if previous_pred_elem + pred_elem != couple_sum_real:
+                    # wrong sum
+                    abductions = np.empty([0, 2])
+                    for i in range(0, int(couple_sum_real) + 1):
+                        if i < 10 and couple_sum_real - i < 10:
+                            abductions = np.append(abductions, [[i, couple_sum_real - i]], 0)
+
+                    best_prob = None
+                    for abduction in abductions:
+                        abduction_prob = output[int(abduction[0])] + output[int(abduction[1])]
+                        if best_prob is None or abduction_prob > best_prob:
+                            best_prob = abduction_prob
+                            best_abduction = [abduction[0], abduction[1]]
+
+                    pseudolabels = np.append(pseudolabels, best_abduction, 0)
+                else:
+                    # correct sum
+                    pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
 
             couple_sum_real = None
 

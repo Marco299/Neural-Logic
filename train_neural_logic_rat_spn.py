@@ -9,6 +9,7 @@ from models.RatSpn import RatSpn
 from train_rat_spn import make_parser, compute_performance
 from pyswip import *
 
+symbolic_module = True
 
 def compute_prediction(sess, data_x, data_labels, batch_size, spn):
 
@@ -146,8 +147,9 @@ def run_training():
     # print(rat_spn)
     print("start training")
 
-    prolog = Prolog()
-    prolog.consult("abduction.pl")
+    if symbolic_module:
+        prolog = Prolog()
+        prolog.consult("abduction.pl")
 
     ############
     # Training #
@@ -351,7 +353,7 @@ def run_training():
             sys.exit(7)
 
 
-def check_prediction(train_labels, prediction, outputs, symbolic_module=True):
+def check_prediction(train_labels, prediction, outputs):
     previous_pred_elem = None
     couple_sum_real = None
     pseudolabels = np.array([])

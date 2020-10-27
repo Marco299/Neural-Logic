@@ -107,6 +107,9 @@ def run_training():
         'epoch_best_valid_loss': None
     }
 
+    # stores log info
+    logs = []
+
     # Make Region Graph
     region_graph = RegionGraph(range(0, num_dims), np.random.randint(0, 1000000000))
     for _ in range(0, ARGS.num_recursive_splits):
@@ -299,6 +302,13 @@ def run_training():
             print("Next epoch might exceed time limit, stop.")
             timeout_flag = True
 
+        logs.append({'train_ACC': train_ACC,
+                     'reals': train_labels[cur_idx],
+                     'predictions': prediction,
+                     'pseudolabels': pseudolabels,
+                     'outputs': outputs
+                     })
+
         if not ARGS.no_save:
             results['train_ACC'].append(train_ACC)
             results['train_CE'].append(train_CE)
@@ -348,6 +358,7 @@ def run_training():
                 pickle.dump(results, open(ARGS.result_path + '/results.pkl', "wb"))
                 saver.save(sess, ARGS.result_path + "/checkpoints/model.ckpt", global_step=epoch_n,
                            write_meta_graph=False)
+                pickle.dump(logs, open(ARGS.result_path + '/log.pkl', "wb"))
 
         if timeout_flag:
             sys.exit(7)

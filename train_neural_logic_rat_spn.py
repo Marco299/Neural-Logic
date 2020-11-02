@@ -158,6 +158,9 @@ def run_training():
     # Training #
     ############
 
+    all_reals = all_predictions = all_pseudolabels = np.array([])
+    all_outputs = np.empty((0, 10))
+
     epoch_elapsed_times = []
     batches_per_epoch = int(np.ceil(float(train_n) / float(ARGS.batch_size)))
 
@@ -183,6 +186,12 @@ def run_training():
                 rat_spn)
 
             pseudolabels = check_prediction(train_labels[cur_idx], prediction, outputs)
+
+            all_reals = np.append(all_reals, train_labels[cur_idx], 0)
+            all_predictions = np.append(all_predictions, prediction, 0)
+            all_pseudolabels = np.append(all_pseudolabels, pseudolabels, 0)
+            all_outputs = np.append(all_outputs, outputs, 0)
+
             feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels}
 
             if ARGS.dropout_rate_input is not None:
@@ -303,10 +312,10 @@ def run_training():
             timeout_flag = True
 
         logs.append({'train_ACC': train_ACC,
-                     'reals': train_labels[cur_idx],
-                     'predictions': prediction,
-                     'pseudolabels': pseudolabels,
-                     'outputs': outputs
+                     'reals': all_reals,
+                     'predictions': all_predictions,
+                     'pseudolabels': all_pseudolabels,
+                     'outputs': all_outputs
                      })
 
         if not ARGS.no_save:

@@ -3,7 +3,6 @@
 	]).
 
 :- ensure_loaded(library(lists)).
-:- ensure_loaded(library(clpfd)).
 
 dig(X) :-
   member(X, [0,1,2,3,4,5,6,7,8,9]).

@@ -6,3 +6,4 @@ results/
 quick_results/
 scribble*.py
 *.txt
+abductions.pkl

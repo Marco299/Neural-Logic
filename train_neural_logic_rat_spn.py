@@ -52,20 +52,20 @@ def select_pseudolabels(abductions, outputs):
         best_prob = None
 
         for abduction in digit:
-            abduction_prob = outputs[2*idx][abduction[0]] + outputs[2*idx+1][abduction[1]]
+            abduction_prob = outputs[3*idx][abduction[0]] + outputs[3*idx+1][abduction[1]] + outputs[3*idx+2][abduction[2]]
             """
             if len(digit) > 1:
                 print(idx, digit)
                 # print(outputs)
-                print(outputs[2*idx][abduction[0]], outputs[2*idx+1][abduction[1]])
+                print(outputs[3*idx][abduction[0]], outputs[3*idx+1][abduction[1]], outputs[3*idx+2][abduction[2]])
                 print(abduction, abduction_prob)
             else:
                 print(abduction, abduction_prob)
             """
             if best_prob is None or abduction_prob > best_prob:
                 best_prob = abduction_prob
-                best_abduction = [abduction[0], abduction[1]]
-
+                best_abduction = [abduction[0], abduction[1], abduction[2]]
+        # input('-----------')
         pseudolabels = np.append(pseudolabels, best_abduction, 0)
 
     return pseudolabels
@@ -183,7 +183,7 @@ def run_training():
         prolog.consult("abduction.pl")
         generate_abductions = Functor("generate_abductions", 2)
         x = Variable()
-        train_sums = [int(sum(train_labels[current: current + 2])) for current in range(0, len(train_labels), 2)]
+        train_sums = [int(sum(train_labels[current: current + 3])) for current in range(0, len(train_labels), 3)]
         q = Query(generate_abductions(train_sums, x))
         q.nextSolution()
         abductions_list = x.value
@@ -225,7 +225,7 @@ def run_training():
                 batch_idx += 1
                 if batch_idx == train_sums_n or \
                         len(abductions_list[batch_idx-1][1]) != len(abductions_list[batch_idx][1])\
-                        or len(cur_idx) == ARGS.batch_size:
+                        or len(cur_idx) == 201:
                     break
 
             outputs, prediction = compute_prediction(
@@ -235,6 +235,12 @@ def run_training():
                 rat_spn)
 
             pseudolabels = select_pseudolabels(cur_abductions, outputs)
+
+            """
+            print(pseudolabels)
+            print(train_labels[cur_idx])
+            input('---')
+            """
 
             all_reals = np.append(all_reals, train_labels[cur_idx], 0)
             all_predictions = np.append(all_predictions, prediction, 0)

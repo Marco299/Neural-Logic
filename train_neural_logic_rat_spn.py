@@ -9,9 +9,10 @@ from models.RatSpn import RatSpn
 from train_rat_spn import make_parser, compute_performance
 from pyswip import *
 
-symbolic_module = True
+abductions_list_file = 'abductions.pkl'
 
-def compute_prediction(sess, data_x, data_labels, batch_size, spn):
+
+def compute_prediction(sess, data_x, batch_size, spn):
 
     num_batches = int(np.ceil(float(data_x.shape[0]) / float(batch_size)))
     test_idx = 0
@@ -22,12 +23,10 @@ def compute_prediction(sess, data_x, data_labels, batch_size, spn):
     for test_k in range(0, num_batches):
         if test_k + 1 < num_batches:
             batch_data = data_x[test_idx:test_idx + batch_size, :]
-            batch_labels = data_labels[test_idx:test_idx + batch_size]
         else:
             batch_data = data_x[test_idx:, :]
-            batch_labels = data_labels[test_idx:]
 
-        feed_dict = {spn.inputs: batch_data, spn.labels: batch_labels}
+        feed_dict = {spn.inputs: batch_data}
         if spn.dropout_input_placeholder is not None:
             feed_dict[spn.dropout_input_placeholder] = 1.0
         if spn.dropout_sums_placeholder is not None:
@@ -44,6 +43,32 @@ def compute_prediction(sess, data_x, data_labels, batch_size, spn):
         test_idx += batch_size
 
     return out_total, pred_total
+
+
+def select_pseudolabels(abductions, outputs):
+    pseudolabels = np.array([])
+
+    for idx, digit in enumerate(abductions):
+        best_prob = None
+
+        for abduction in digit:
+            abduction_prob = outputs[2*idx][abduction[0]] + outputs[2*idx+1][abduction[1]]
+            """
+            if len(digit) > 1:
+                print(idx, digit)
+                # print(outputs)
+                print(outputs[2*idx][abduction[0]], outputs[2*idx+1][abduction[1]])
+                print(abduction, abduction_prob)
+            else:
+                print(abduction, abduction_prob)
+            """
+            if best_prob is None or abduction_prob > best_prob:
+                best_prob = abduction_prob
+                best_abduction = [abduction[0], abduction[1]]
+
+        pseudolabels = np.append(pseudolabels, best_abduction, 0)
+
+    return pseudolabels
 
 
 def run_training():
@@ -148,49 +173,73 @@ def run_training():
         print("")
 
     # print(rat_spn)
-    print("start training")
 
-    if symbolic_module:
+    if os.path.exists(abductions_list_file):
+        print("Load abductions")
+        abductions_list = pickle.load(open(abductions_list_file, 'rb'))
+    else:
+        print("Compute and save abductions")
         prolog = Prolog()
         prolog.consult("abduction.pl")
+        generate_abductions = Functor("generate_abductions", 2)
+        x = Variable()
+        train_sums = [int(sum(train_labels[current: current + 2])) for current in range(0, len(train_labels), 2)]
+        q = Query(generate_abductions(train_sums, x))
+        q.nextSolution()
+        abductions_list = x.value
+        q.closeQuery()
+        pickle.dump(abductions_list, open(abductions_list_file, "wb"))
+
+    train_sums_n = len(abductions_list)
+    """
+    single element(couple): abductions_list[i]
+    indexes: abductions_list[i][0]
+    abductions: abductions_list[i][1]
+    """
 
     ############
     # Training #
     ############
 
+    print("Start training")
+
     all_reals = all_predictions = all_pseudolabels = np.array([])
-    all_outputs = np.empty((0, 10))
+    # all_outputs = np.empty((0, 10))
 
     epoch_elapsed_times = []
-    batches_per_epoch = int(np.ceil(float(train_n) / float(ARGS.batch_size)))
 
     for epoch_n in range(0, ARGS.num_epochs):
 
         epoch_start_time = time.time()
-        rp = np.random.permutation(train_n)
 
-        batch_start_idx = 0
+        batch_idx = 0
         elapsed_wall_time_epoch = 0.0
-        for batch_n in range(0, batches_per_epoch):
-            if batch_n + 1 < batches_per_epoch:
-                cur_idx = rp[batch_start_idx:batch_start_idx + ARGS.batch_size]
-            else:
-                cur_idx = rp[batch_start_idx:]
-            batch_start_idx += ARGS.batch_size
+
+        while batch_idx != train_sums_n:
+            cur_idx = []
+            cur_abductions = []
+            while True:
+                cur_idx += abductions_list[batch_idx][0]
+                cur_abductions.append(abductions_list[batch_idx][1])
+
+                batch_idx += 1
+                if batch_idx == train_sums_n or \
+                        len(abductions_list[batch_idx-1][1]) != len(abductions_list[batch_idx][1])\
+                        or len(cur_idx) == ARGS.batch_size:
+                    break
 
             outputs, prediction = compute_prediction(
                 sess,
                 train_x[cur_idx, :],
-                train_labels[cur_idx],
-                100,
+                len(cur_idx),
                 rat_spn)
 
-            pseudolabels = check_prediction(train_labels[cur_idx], prediction, outputs)
+            pseudolabels = select_pseudolabels(cur_abductions, outputs)
 
             all_reals = np.append(all_reals, train_labels[cur_idx], 0)
             all_predictions = np.append(all_predictions, prediction, 0)
             all_pseudolabels = np.append(all_pseudolabels, pseudolabels, 0)
-            all_outputs = np.append(all_outputs, outputs, 0)
+            # all_outputs = np.append(all_outputs, outputs, 0)
 
             feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels}
 
@@ -218,20 +267,6 @@ def run_training():
                         rat_spn.neg_norm_ll,
                         rat_spn.neg_margin_objective], feed_dict=feed_dict)
                 elapsed_wall_time_epoch += (time.time() - start_time)
-
-                """
-                if batch_n % 10 == 1:
-                    print(
-                        "epoch: {}[{}, {:.5f}]   CE: {:.5f}   nll: {:.5f}   negmargin: {:.5f}   loss: {:.5f}   time: {:.5f}".format(
-                            epoch_n,
-                            batch_n,
-                            cur_lr,
-                            CEM_value,
-                            ll_mean_val,
-                            margin_val,
-                            loss_val,
-                            elapsed_wall_time_epoch))
-                """
 
         if ARGS.optimizer == "em":
             sess.run(rat_spn.em_update_params)
@@ -314,8 +349,7 @@ def run_training():
         logs.append({'train_ACC': train_ACC,
                      'reals': all_reals,
                      'predictions': all_predictions,
-                     'pseudolabels': all_pseudolabels,
-                     'outputs': all_outputs
+                     'pseudolabels': all_pseudolabels
                      })
 
         if not ARGS.no_save:
@@ -371,69 +405,6 @@ def run_training():
 
         if timeout_flag:
             sys.exit(7)
-
-
-def check_prediction(train_labels, prediction, outputs):
-    previous_pred_elem = None
-    couple_sum_real = None
-    pseudolabels = np.array([])
-
-    if symbolic_module:
-        add = Functor("add", 3)
-        x = Variable()
-        y = Variable()
-
-    for real_elem, pred_elem, output in zip(train_labels, prediction, outputs):
-        if couple_sum_real is None:
-            couple_sum_real = real_elem
-            previous_pred_elem = pred_elem
-        else:
-            couple_sum_real += real_elem
-
-            if symbolic_module:
-                # call symbolic module to check prediction correctness
-                q = Query(add(int(previous_pred_elem), int(pred_elem), int(couple_sum_real)))
-                pred_correctness = q.nextSolution()
-                q.closeQuery()
-
-                if not pred_correctness:
-                    # wrong sum
-                    q = Query(add(x, y, int(couple_sum_real)))
-                    best_prob = None
-                    while q.nextSolution():
-                        abduction_prob = output[x.value] + output[y.value]
-                        if best_prob is None or abduction_prob > best_prob:
-                            best_prob = abduction_prob
-                            best_abduction = [x.value, y.value]
-                    q.closeQuery()
-                    pseudolabels = np.append(pseudolabels, best_abduction, 0)
-                else:
-                    # correct sum
-                    pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
-
-            else:
-                if previous_pred_elem + pred_elem != couple_sum_real:
-                    # wrong sum
-                    abductions = np.empty([0, 2])
-                    for i in range(0, int(couple_sum_real) + 1):
-                        if i < 10 and couple_sum_real - i < 10:
-                            abductions = np.append(abductions, [[i, couple_sum_real - i]], 0)
-
-                    best_prob = None
-                    for abduction in abductions:
-                        abduction_prob = output[int(abduction[0])] + output[int(abduction[1])]
-                        if best_prob is None or abduction_prob > best_prob:
-                            best_prob = abduction_prob
-                            best_abduction = [abduction[0], abduction[1]]
-
-                    pseudolabels = np.append(pseudolabels, best_abduction, 0)
-                else:
-                    # correct sum
-                    pseudolabels = np.append(pseudolabels, [previous_pred_elem, pred_elem], 0)
-
-            couple_sum_real = None
-
-    return pseudolabels
 
 
 if __name__ == '__main__':

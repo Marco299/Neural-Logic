@@ -45,7 +45,7 @@ def compute_prediction(sess, data_x, batch_size, spn):
     return out_total, pred_total
 
 
-def select_pseudolabels(abductions, outputs, train_labels):
+def select_pseudolabels(abductions, outputs):
     pseudolabels = np.array([])
     examples_indexes = np.array([])
 
@@ -261,7 +261,7 @@ def run_training():
                 len(cur_idx),
                 rat_spn)
 
-            pseudolabels, indexes = select_pseudolabels(cur_abductions, outputs, train_labels[cur_idx])
+            pseudolabels, indexes = select_pseudolabels(cur_abductions, outputs)
             cur_idx = np.array(cur_idx)[indexes].tolist()
 
             all_labels = np.append(all_labels, train_labels[cur_idx], 0)

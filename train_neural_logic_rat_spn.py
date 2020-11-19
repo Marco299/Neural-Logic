@@ -94,7 +94,6 @@ def select_pseudolabels(abductions, outputs, train_labels):
 
 def run_training():
     training_start_time = time.time()
-    timeout_flag = False
 
     #############
     # Load data #
@@ -365,16 +364,10 @@ def run_training():
         print('   ###')
         print('')
 
-        ##############
-        ### timing ###
-        ##############
+        # timing
         epoch_elapsed_times.append(time.time() - epoch_start_time)
-        estimated_next_epoch_time = np.mean(epoch_elapsed_times) + 3 * np.std(epoch_elapsed_times)
-        remaining_time = ARGS.timeout_seconds - (time.time() - training_start_time)
-        if estimated_next_epoch_time + ARGS.timeout_safety_seconds > remaining_time:
-            print("Next epoch might exceed time limit, stop.")
-            timeout_flag = True
 
+        #logs
         logs.append({'valid_ACC': valid_ACC,
                      'labels': all_labels,
                      'pseudolabels': all_pseudolabels,
@@ -425,15 +418,11 @@ def run_training():
                     results['epoch_best_valid_loss'] = epoch_n
 
             if epoch_n % ARGS.store_model_every_epochs == 0 \
-                    or epoch_n + 1 == ARGS.num_epochs \
-                    or timeout_flag:
+                    or epoch_n + 1 == ARGS.num_epochs:
                 pickle.dump(results, open(ARGS.result_path + '/results.pkl', "wb"))
                 saver.save(sess, ARGS.result_path + "/checkpoints/model.ckpt", global_step=epoch_n,
                            write_meta_graph=False)
                 pickle.dump(logs, open(ARGS.result_path + '/log.pkl', "wb"))
-
-        if timeout_flag:
-            sys.exit(7)
 
 
 if __name__ == '__main__':

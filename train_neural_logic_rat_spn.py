@@ -9,7 +9,7 @@ from models.RatSpn import RatSpn
 from train_rat_spn import make_parser, compute_performance
 from pyswip import *
 
-abductions_list_file = 'abductions.pkl'
+abductions_list_dir = 'abductions/'
 
 
 def compute_prediction(sess, data_x, batch_size, spn):
@@ -45,69 +45,51 @@ def compute_prediction(sess, data_x, batch_size, spn):
     return out_total, pred_total
 
 
-def select_pseudolabels(abductions, outputs, train_labels, bool):
+def select_pseudolabels(abductions, outputs, train_labels):
     pseudolabels = np.array([])
-    indexes = np.array([])
+    examples_indexes = np.array([])
 
     for idx, digit in enumerate(abductions):
         best_prob = None
         second_best_prob = None
+        start_idx = ARGS.num_addends * idx
 
         for abduction in digit:
-            abduction_prob = outputs[3*idx][abduction[0]] + outputs[3*idx+1][abduction[1]] + outputs[3*idx+2][abduction[2]]
-            """
-            if bool:
-                print(abduction, abduction_prob)
-            
-            if len(digit) > 1:
-                print(idx, digit)
-                # print(outputs)
-                print(outputs[3*idx][abduction[0]], outputs[3*idx+1][abduction[1]], outputs[3*idx+2][abduction[2]])
-                print(abduction, abduction_prob)
-            else:
-                print(abduction, abduction_prob)
-            """
 
+            # compute abduction probability
+            abduction_prob = outputs[start_idx][abduction[0]]
+            for i in range(1, ARGS.num_addends):
+                abduction_prob += outputs[start_idx+i][abduction[i]]
+
+            # update the two most likely abductions
             if best_prob is None:
                 best_prob = abduction_prob
-                best_abduction = [abduction[0], abduction[1], abduction[2]]
+                best_abduction = [abduction[i] for i in range(0, ARGS.num_addends)]
             elif second_best_prob is None:
                 if abduction_prob <= best_prob:
                     second_best_prob = abduction_prob
                 else:
                     second_best_prob = best_prob
                     best_prob = abduction_prob
-                    best_abduction = [abduction[0], abduction[1], abduction[2]]
+                    best_abduction = [abduction[i] for i in range(0, ARGS.num_addends)]
             else:
                 if abduction_prob > best_prob:
                     second_best_prob = best_prob
                     best_prob = abduction_prob
-                    best_abduction = [abduction[0], abduction[1], abduction[2]]
+                    best_abduction = [abduction[i] for i in range(0, ARGS.num_addends)]
                 elif abduction_prob > second_best_prob:
                     second_best_prob = abduction_prob
 
-            """
-            if best_prob is None or abduction_prob > best_prob:
-                best_prob = abduction_prob
-                best_abduction = [abduction[0], abduction[1], abduction[2]]
-            """
+        # compute variation between the two most likely abductions
         if second_best_prob is not None:
             variation = abs((best_prob - second_best_prob) / best_prob * 100)
-        else:
-            variation = 1
-        """    
-        if bool:
-            print('-----------')
-            print(best_abduction)
-            print(train_labels[3*idx], train_labels[3*idx+1], train_labels[3*idx+2])
-            print(variation)
-            input('----------------------')
-        """
-        if variation >= 0.09:
-            pseudolabels = np.append(pseudolabels, best_abduction, 0)
-            indexes = np.append(indexes, [3*idx, 3*idx+1, 3*idx+2], 0)
 
-    return pseudolabels, indexes.astype(int)
+        # filter results according to the threshold
+        if second_best_prob is None or variation >= ARGS.pseudolabels_threshold:
+            pseudolabels = np.append(pseudolabels, best_abduction, 0)
+            examples_indexes = np.append(examples_indexes, [start_idx+i for i in range(0, ARGS.num_addends)], 0)
+
+    return pseudolabels, examples_indexes.astype(int)
 
 
 def run_training():
@@ -213,17 +195,19 @@ def run_training():
 
     # print(rat_spn)
 
+    abductions_list_file = abductions_list_dir + 'abductions_list_' + str(ARGS.num_addends) + '.pkl'
+
     if os.path.exists(abductions_list_file):
         print("Load abductions")
         abductions_list = pickle.load(open(abductions_list_file, 'rb'))
     else:
         print("Compute and save abductions")
+        train_sums = [int(sum(train_labels[current: current + ARGS.num_addends])) for current in range(0, len(train_labels), ARGS.num_addends)]
         prolog = Prolog()
         prolog.consult("abduction.pl")
-        generate_abductions = Functor("generate_abductions", 2)
+        generate_abductions = Functor("generate_abductions", 3)
         x = Variable()
-        train_sums = [int(sum(train_labels[current: current + 3])) for current in range(0, len(train_labels), 3)]
-        q = Query(generate_abductions(train_sums, x))
+        q = Query(generate_abductions(train_sums, ARGS.num_addends, x))
         q.nextSolution()
         abductions_list = x.value
         q.closeQuery()
@@ -242,10 +226,14 @@ def run_training():
 
     print("Start training")
 
-    all_reals = all_predictions = all_pseudolabels = np.array([])
+    all_labels = all_pseudolabels = np.array([])
     # all_outputs = np.empty((0, 10))
 
     epoch_elapsed_times = []
+
+    batch_size = ARGS.batch_size
+    while batch_size % ARGS.num_addends != 0:
+        batch_size += 1
 
     for epoch_n in range(0, ARGS.num_epochs):
 
@@ -253,6 +241,7 @@ def run_training():
 
         batch_idx = 0
         elapsed_wall_time_epoch = 0.0
+        considered_examples = 0
 
         while batch_idx != train_sums_n:
             cur_idx = []
@@ -264,7 +253,7 @@ def run_training():
                 batch_idx += 1
                 if batch_idx == train_sums_n or \
                         len(abductions_list[batch_idx-1][1]) != len(abductions_list[batch_idx][1])\
-                        or len(cur_idx) == 201:
+                        or len(cur_idx) == batch_size:
                     break
 
             outputs, prediction = compute_prediction(
@@ -273,18 +262,12 @@ def run_training():
                 len(cur_idx),
                 rat_spn)
 
-            pseudolabels, indexes = select_pseudolabels(cur_abductions, outputs, train_labels[cur_idx], epoch_n == 3)
+            pseudolabels, indexes = select_pseudolabels(cur_abductions, outputs, train_labels[cur_idx])
             cur_idx = np.array(cur_idx)[indexes].tolist()
-            """
-            print(pseudolabels)
-            print(train_labels[cur_idx])
-            input('---')
-            """
 
-            all_reals = np.append(all_reals, train_labels[cur_idx], 0)
-            all_predictions = np.append(all_predictions, prediction, 0)
+            all_labels = np.append(all_labels, train_labels[cur_idx], 0)
             all_pseudolabels = np.append(all_pseudolabels, pseudolabels, 0)
-            # all_outputs = np.append(all_outputs, outputs, 0)
+            considered_examples += len(cur_idx)
 
             feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels}
 
@@ -324,6 +307,7 @@ def run_training():
         ################
         print('')
         print('epoch {}'.format(epoch_n))
+        print('considered examples: {}'.format(considered_examples))
 
         num_correct_train, CE_total, train_LL, train_MARG, train_loss = compute_performance(
             sess,
@@ -391,10 +375,10 @@ def run_training():
             print("Next epoch might exceed time limit, stop.")
             timeout_flag = True
 
-        logs.append({'train_ACC': train_ACC,
-                     'reals': all_reals,
-                     'predictions': all_predictions,
-                     'pseudolabels': all_pseudolabels
+        logs.append({'valid_ACC': valid_ACC,
+                     'labels': all_labels,
+                     'pseudolabels': all_pseudolabels,
+                     'considered_examples': considered_examples
                      })
 
         if not ARGS.no_save:
@@ -491,5 +475,7 @@ if __name__ == '__main__':
     for k in sorted_keys:
         print('{}: {}'.format(k, ARGS.__dict__[k]))
     print("")
+
+    utils.mkdir_p(abductions_list_dir)
 
     run_training()

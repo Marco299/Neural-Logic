@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import texttable as tt
 from glob import glob
@@ -16,7 +17,7 @@ table.set_precision(2)
 table.add_row(["split_depth", "num_input_distributions", "num_recursive_splits", "num_sums",
                "dropout_rate_input", "dropout_rate_sums", 'train_ACC', 'valid_ACC', 'test_ACC'])
 
-files = [y for x in os.walk(base_result_path) for y in glob(os.path.join(x[0], 'results.pkl'))]
+files = [y for x in os.walk(base_result_path + sys.argv[1]) for y in glob(os.path.join(x[0], 'results.pkl'))]
 
 for file in files:
     parameters = ([float(s) for s in re.findall(r'-?\d+\.?\d*', file)])

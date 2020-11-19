@@ -45,15 +45,20 @@ def compute_prediction(sess, data_x, batch_size, spn):
     return out_total, pred_total
 
 
-def select_pseudolabels(abductions, outputs):
+def select_pseudolabels(abductions, outputs, train_labels, bool):
     pseudolabels = np.array([])
+    indexes = np.array([])
 
     for idx, digit in enumerate(abductions):
         best_prob = None
+        second_best_prob = None
 
         for abduction in digit:
             abduction_prob = outputs[3*idx][abduction[0]] + outputs[3*idx+1][abduction[1]] + outputs[3*idx+2][abduction[2]]
             """
+            if bool:
+                print(abduction, abduction_prob)
+            
             if len(digit) > 1:
                 print(idx, digit)
                 # print(outputs)
@@ -62,13 +67,47 @@ def select_pseudolabels(abductions, outputs):
             else:
                 print(abduction, abduction_prob)
             """
+
+            if best_prob is None:
+                best_prob = abduction_prob
+                best_abduction = [abduction[0], abduction[1], abduction[2]]
+            elif second_best_prob is None:
+                if abduction_prob <= best_prob:
+                    second_best_prob = abduction_prob
+                else:
+                    second_best_prob = best_prob
+                    best_prob = abduction_prob
+                    best_abduction = [abduction[0], abduction[1], abduction[2]]
+            else:
+                if abduction_prob > best_prob:
+                    second_best_prob = best_prob
+                    best_prob = abduction_prob
+                    best_abduction = [abduction[0], abduction[1], abduction[2]]
+                elif abduction_prob > second_best_prob:
+                    second_best_prob = abduction_prob
+
+            """
             if best_prob is None or abduction_prob > best_prob:
                 best_prob = abduction_prob
                 best_abduction = [abduction[0], abduction[1], abduction[2]]
-        # input('-----------')
-        pseudolabels = np.append(pseudolabels, best_abduction, 0)
+            """
+        if second_best_prob is not None:
+            variation = abs((best_prob - second_best_prob) / best_prob * 100)
+        else:
+            variation = 1
+        """    
+        if bool:
+            print('-----------')
+            print(best_abduction)
+            print(train_labels[3*idx], train_labels[3*idx+1], train_labels[3*idx+2])
+            print(variation)
+            input('----------------------')
+        """
+        if variation >= 0.09:
+            pseudolabels = np.append(pseudolabels, best_abduction, 0)
+            indexes = np.append(indexes, [3*idx, 3*idx+1, 3*idx+2], 0)
 
-    return pseudolabels
+    return pseudolabels, indexes.astype(int)
 
 
 def run_training():
@@ -234,8 +273,8 @@ def run_training():
                 len(cur_idx),
                 rat_spn)
 
-            pseudolabels = select_pseudolabels(cur_abductions, outputs)
-
+            pseudolabels, indexes = select_pseudolabels(cur_abductions, outputs, train_labels[cur_idx], epoch_n == 3)
+            cur_idx = np.array(cur_idx)[indexes].tolist()
             """
             print(pseudolabels)
             print(train_labels[cur_idx])

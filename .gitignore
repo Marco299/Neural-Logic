@@ -8,3 +8,4 @@ abductions/
 scribble*.py
 *.txt
 abductions.pkl
+kmeans/

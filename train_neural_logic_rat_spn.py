@@ -4,12 +4,15 @@ import datasets
 import numpy as np
 import tensorflow as tf
 import time
+from collections import Counter
+from sklearn.cluster import KMeans
 from models.RegionGraph import RegionGraph
 from models.RatSpn import RatSpn
 from train_rat_spn import make_parser, compute_performance
 from pyswip import *
 
 abductions_list_dir = 'abductions/'
+kmeans_dir = 'kmeans/'
 
 
 def compute_prediction(sess, data_x, batch_size, spn):
@@ -90,6 +93,138 @@ def select_pseudolabels(abductions, outputs):
             examples_indexes = np.append(examples_indexes, [start_idx+i for i in range(0, ARGS.num_addends)], 0)
 
     return pseudolabels, examples_indexes.astype(int)
+
+
+def compute_abductions(train_sums):
+
+    abductions_list_file = abductions_list_dir + 'abductions_list_' + str(ARGS.num_addends) + '.pkl'
+
+    if os.path.exists(abductions_list_file):
+        print("Load abductions")
+        abductions_list = pickle.load(open(abductions_list_file, 'rb'))
+    else:
+        print("Compute and save abductions")
+        prolog = Prolog()
+        prolog.consult("abduction.pl")
+        generate_abductions = Functor("generate_abductions", 3)
+        x = Variable()
+        q = Query(generate_abductions(train_sums, ARGS.num_addends, x))
+        q.nextSolution()
+        abductions_list = x.value
+        q.closeQuery()
+        pickle.dump(abductions_list, open(abductions_list_file, "wb"))
+
+    """
+    single element(pair): abductions_list[i]
+    indexes: abductions_list[i][0]
+    abductions: abductions_list[i][1]
+    """
+
+    return abductions_list
+
+
+def perform_clustering(train_x, abductions_list):
+
+    kmeans_file = kmeans_dir + "kmeans.pkl"
+
+    if os.path.exists(kmeans_file):
+        print("Load clusters")
+        kmeans = pickle.load(open(kmeans_file, 'rb'))
+    else:
+        print("Compute and save clusters")
+        kmeans = KMeans(n_clusters=10, random_state=0).fit(train_x)
+        pickle.dump(kmeans, open(kmeans_file, "wb"))
+
+    # select certain abductions
+    certain_idx = []
+    certain_abductions = []
+
+    for elem in abductions_list:
+        if len(elem[1]) == 1:
+            certain_idx += elem[0]
+            certain_abductions += elem[1]
+        else:
+            break
+
+    # flat abductions list
+    certain_abductions = [item for sublist in certain_abductions for item in sublist]
+
+    # separate different digits
+    # key = digit, value = list of idx
+    certain_abductions_dict = {}
+    for idx, digit in zip(certain_idx, certain_abductions):
+
+        if digit in certain_abductions_dict:
+            certain_abductions_dict[digit].append(idx)
+        else:
+            certain_abductions_dict[digit] = [idx]
+
+    clusters = {}
+    # key = cluster id, value = real digit
+    for digit, idxs in certain_abductions_dict.items():
+        candidate_clusters = []
+        for idx in idxs:
+            candidate_clusters.append(kmeans.labels_[idx])
+
+        most_frequent_candidate = most_frequent(candidate_clusters)
+        if most_frequent_candidate:
+            clusters[most_frequent_candidate] = digit
+
+    # select idx of selected clusters
+    clusters_idxs = {}
+    for i in range(0, len(kmeans.labels_)):
+        if kmeans.labels_[i] in clusters:
+            if clusters[kmeans.labels_[i]] in clusters_idxs:
+                clusters_idxs[clusters[kmeans.labels_[i]]].append(i)
+            else:
+                clusters_idxs[clusters[kmeans.labels_[i]]] = [i]
+
+    # create pseudolabels
+    pseudolabels = np.array([])
+    cur_idx = []
+    for digit, idx in clusters_idxs.items():
+        cur_idx = cur_idx + idx
+        pseudolabels = np.concatenate((pseudolabels, np.full(len(idx), digit)), axis=0)
+
+    return cur_idx, pseudolabels
+
+
+def most_frequent(list):
+
+    occurence_count = Counter(list)
+    first_two_candidates = occurence_count.most_common(2)
+    if first_two_candidates[0][1] > first_two_candidates[1][1]:
+        return first_two_candidates[0][0]
+
+
+def train_spn(sess, feed_dict, rat_spn, cur_idx, num_classes, pseudolabels, elapsed_wall_time_epoch):
+
+    if ARGS.dropout_rate_input is not None:
+        feed_dict[rat_spn.dropout_input_placeholder] = ARGS.dropout_rate_input
+    if ARGS.dropout_rate_sums is not None:
+        feed_dict[rat_spn.dropout_sums_placeholder] = ARGS.dropout_rate_sums
+
+    start_time = time.time()
+    if ARGS.optimizer == "em":
+        one_hot_labels = -np.inf * np.ones((len(cur_idx), num_classes))
+        one_hot_labels[range(len(cur_idx)), [int(x) for x in pseudolabels]] = 0.0
+        feed_dict[rat_spn.EM_deriv_input_pl] = one_hot_labels
+
+        start_time = time.time()
+        sess.run(rat_spn.em_update_accums, feed_dict=feed_dict)
+        elapsed_wall_time_epoch += (time.time() - start_time)
+    else:
+        _, CEM_value, cur_lr, loss_val, ll_mean_val, margin_val = \
+            sess.run([
+                rat_spn.train_op,
+                rat_spn.cross_entropy_mean,
+                rat_spn.learning_rate,
+                rat_spn.objective,
+                rat_spn.neg_norm_ll,
+                rat_spn.neg_margin_objective], feed_dict=feed_dict)
+        elapsed_wall_time_epoch += (time.time() - start_time)
+
+    return CEM_value, cur_lr, loss_val, ll_mean_val, margin_val, elapsed_wall_time_epoch
 
 
 def run_training():
@@ -194,30 +329,45 @@ def run_training():
 
     # print(rat_spn)
 
-    abductions_list_file = abductions_list_dir + 'abductions_list_' + str(ARGS.num_addends) + '.pkl'
+    train_sums = [int(sum(train_labels[current: current + ARGS.num_addends])) for current in
+                  range(0, len(train_labels), ARGS.num_addends)]
 
-    if os.path.exists(abductions_list_file):
-        print("Load abductions")
-        abductions_list = pickle.load(open(abductions_list_file, 'rb'))
-    else:
-        print("Compute and save abductions")
-        train_sums = [int(sum(train_labels[current: current + ARGS.num_addends])) for current in range(0, len(train_labels), ARGS.num_addends)]
-        prolog = Prolog()
-        prolog.consult("abduction.pl")
-        generate_abductions = Functor("generate_abductions", 3)
-        x = Variable()
-        q = Query(generate_abductions(train_sums, ARGS.num_addends, x))
-        q.nextSolution()
-        abductions_list = x.value
-        q.closeQuery()
-        pickle.dump(abductions_list, open(abductions_list_file, "wb"))
-
+    abductions_list = compute_abductions(train_sums)
     train_sums_n = len(abductions_list)
-    """
-    single element(couple): abductions_list[i]
-    indexes: abductions_list[i][0]
-    abductions: abductions_list[i][1]
-    """
+
+
+    ################
+    # Pre-Training #
+    ################
+    clustering_flag = True
+
+    if clustering_flag:
+
+        idx, pseudolabels = perform_clustering(train_x, abductions_list)
+
+        print("Start pre-training")
+
+        for epoch_n in range(0, 5):
+
+            batch_start_idx = 0
+            batches_per_epoch = int(np.ceil(float(len(idx)) / float(ARGS.batch_size)))
+            for batch_n in range(0, batches_per_epoch):
+                if batch_n + 1 < batches_per_epoch:
+                    cur_idx = idx[batch_start_idx:batch_start_idx + ARGS.batch_size]
+                    cur_pseudolabels = pseudolabels[batch_start_idx:batch_start_idx + ARGS.batch_size]
+                else:
+                    cur_idx = idx[batch_start_idx:]
+                    cur_pseudolabels = pseudolabels[batch_start_idx:]
+                batch_start_idx += ARGS.batch_size
+
+                feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: cur_pseudolabels}
+                train_spn(sess, feed_dict, rat_spn, cur_idx, num_classes, pseudolabels, 0)
+
+            if ARGS.optimizer == "em":
+                sess.run(rat_spn.em_update_params)
+                sess.run(rat_spn.em_reset_accums)
+            else:
+                sess.run(rat_spn.decrease_lr_op)
 
     ############
     # Training #
@@ -269,31 +419,7 @@ def run_training():
             considered_examples += len(cur_idx)
 
             feed_dict = {rat_spn.inputs: train_x[cur_idx, :], rat_spn.labels: pseudolabels}
-
-            if ARGS.dropout_rate_input is not None:
-                feed_dict[rat_spn.dropout_input_placeholder] = ARGS.dropout_rate_input
-            if ARGS.dropout_rate_sums is not None:
-                feed_dict[rat_spn.dropout_sums_placeholder] = ARGS.dropout_rate_sums
-
-            start_time = time.time()
-            if ARGS.optimizer == "em":
-                one_hot_labels = -np.inf * np.ones((len(cur_idx), num_classes))
-                one_hot_labels[range(len(cur_idx)), [int(x) for x in pseudolabels]] = 0.0
-                feed_dict[rat_spn.EM_deriv_input_pl] = one_hot_labels
-
-                start_time = time.time()
-                sess.run(rat_spn.em_update_accums, feed_dict=feed_dict)
-                elapsed_wall_time_epoch += (time.time() - start_time)
-            else:
-                _, CEM_value, cur_lr, loss_val, ll_mean_val, margin_val = \
-                    sess.run([
-                        rat_spn.train_op,
-                        rat_spn.cross_entropy_mean,
-                        rat_spn.learning_rate,
-                        rat_spn.objective,
-                        rat_spn.neg_norm_ll,
-                        rat_spn.neg_margin_objective], feed_dict=feed_dict)
-                elapsed_wall_time_epoch += (time.time() - start_time)
+            _, _, _, _, _, elapsed_wall_time_epoch = train_spn(sess, feed_dict, rat_spn, cur_idx, num_classes, pseudolabels, elapsed_wall_time_epoch)
 
         if ARGS.optimizer == "em":
             sess.run(rat_spn.em_update_params)
@@ -466,5 +592,6 @@ if __name__ == '__main__':
     print("")
 
     utils.mkdir_p(abductions_list_dir)
+    utils.mkdir_p(kmeans_dir)
 
     run_training()

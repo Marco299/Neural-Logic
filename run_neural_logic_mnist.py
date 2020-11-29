@@ -7,6 +7,13 @@ import subprocess
 structure_dict = {}
 
 structure_dict[1] = [
+    {'num_recursive_splits': 9, 'num_input_distributions': 10, 'num_sums': 10}]
+
+param_configs = [
+        {'dropout_rate_input': 1.0, 'dropout_rate_sums': 1.0}]
+
+"""
+structure_dict[1] = [
     {'num_recursive_splits': 9, 'num_input_distributions': 10, 'num_sums': 10},
     {'num_recursive_splits': 14, 'num_input_distributions': 15, 'num_sums': 10},
     {'num_recursive_splits': 19, 'num_input_distributions': 20, 'num_sums': 10},
@@ -16,14 +23,14 @@ structure_dict[1] = [
 param_configs = [
         {'dropout_rate_input': 1.0, 'dropout_rate_sums': 1.0},
         {'dropout_rate_input': 0.75, 'dropout_rate_sums': 0.75}]
-
+"""
 num_epochs = 4
 
 # [0, 0.01, 0.05, 0.1]
-pseudolabels_thresholds = [0.05]
+pseudolabels_thresholds = [0.08]
 
 base_result_path = "results/neural/mnist/num_addends_"
-num_addends = 3
+num_addends = 4
 
 
 def run():

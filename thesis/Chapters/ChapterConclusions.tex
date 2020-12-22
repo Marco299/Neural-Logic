@@ -1,0 +1,16 @@
+\chapter{Conclusions and Future Work}
+\label{ChapterConclusions} 
+Neural-symbolic computing aims at integrating two most fundamental cognitive abilities: the ability to learn from the environment, and the ability to reason from what has been learned. Neural-symbolic computing has been an active topic of research for many years, reconciling the advantages of robust learning in neural networks and reasoning and interpretability of symbolic representation.
+
+In this thesis, we explored the integration between \textit{Sum-Product networks} (specifically \textit{Random-And-Tensorized SPNs}) and \textit{abductive reasoning}, applied to a more difficult classification task, in which the known information about training examples is not directly their associated class but an aggregate information deriving from it. We stressed the model robustness by increasing the task difficulty, that is increasing the number of possible abductions and decreasing the number of certainties (i.e., observations for which just one possible label can be abduced). Experiments results showed that both the implemented solutions and \textit{RAT-SPNs} have proved to be adequate (but not always sufficient) in dealing with a task of this kind.
+
+In the following, we outline some possible future works:
+
+\begin{itemize}
+	\item to explore the model behaviour with SPNs having higher split depths, in order to understand if the use of more complex models might bring some advantages;
+	\item to deal with tasks in which the number of possible abductions for some observations is so high that it requires a pruning mechanism. Such cases would need to increase the interaction between symbolic and sub-symbolic modules, specifically during the training phase;
+	\item to implement an \textit{adaptive} abduction threshold, that varies according to the learning model degree within both the same training epoch and different ones;
+	\item to use a loss function that penalizes errors in a manner directly proportional to the probability of the corresponding abduction;
+	\item to ensure in some way a consistency in examples labeling by the model.
+\end{itemize}
+

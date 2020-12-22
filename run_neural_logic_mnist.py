@@ -3,74 +3,91 @@ import os
 import sys
 import filelock
 import subprocess
-import time
 
-from run_rat_spn_mnist import structure_dict, param_configs, start_time, time_limit_seconds, dont_start_if_less_than_seconds, num_epochs
+structure_dict = {}
 
-base_result_path = "results/neural/mnist/"
+structure_dict[1] = [
+    {'num_recursive_splits': 9, 'num_input_distributions': 10, 'num_sums': 10}]
+
+param_configs = [
+        {'dropout_rate_input': 1.0, 'dropout_rate_sums': 1.0}]
+
+"""
+structure_dict[1] = [
+    {'num_recursive_splits': 9, 'num_input_distributions': 10, 'num_sums': 10},
+    {'num_recursive_splits': 14, 'num_input_distributions': 15, 'num_sums': 10},
+    {'num_recursive_splits': 19, 'num_input_distributions': 20, 'num_sums': 10},
+    {'num_recursive_splits': 29, 'num_input_distributions': 25, 'num_sums': 10},
+    {'num_recursive_splits': 40, 'num_input_distributions': 33, 'num_sums': 10}]
+
+param_configs = [
+        {'dropout_rate_input': 1.0, 'dropout_rate_sums': 1.0},
+        {'dropout_rate_input': 0.75, 'dropout_rate_sums': 0.75}]
+"""
+num_epochs = 4
+
+# [0, 0.01, 0.05, 0.1]
+pseudolabels_thresholds = [0.08]
+
+base_result_path = "results/neural/mnist/num_addends_"
+num_addends = 4
 
 
 def run():
     total_dict_len = 0
     for _, value in structure_dict.items():
         total_dict_len += len(value)
-    total_config = total_dict_len * len(param_configs)
+    total_config = total_dict_len * len(param_configs) * len(pseudolabels_thresholds)
     current_config = 1
 
     for split_depth in structure_dict:
         for structure_config in structure_dict[split_depth]:
             for config_dict in param_configs:
+                for pseudolabels_threshold in pseudolabels_thresholds:
 
-                remaining_time = time_limit_seconds - (time.time() - start_time)
-                if remaining_time < dont_start_if_less_than_seconds:
-                    print("Only {} seconds remaining, stop worker".format(remaining_time))
-                    sys.exit(0)
+                    cmd = "python -W ignore train_neural_logic_rat_spn.py --store_best_valid_loss --store_best_valid_acc --num_epochs {}".format(num_epochs)
+                    cmd += " --split_depth {}".format(split_depth)
+                    cmd += " --data_path data/mnist/"
+                    cmd += " --num_addends {}".format(num_addends)
+                    cmd += " --pseudolabels_threshold {}".format(pseudolabels_threshold)
 
-                cmd = "python -W ignore train_neural_logic_rat_spn.py --store_best_valid_loss --store_best_valid_acc --num_epochs {}".format(num_epochs)
-                cmd += " --timeout_seconds {}".format(remaining_time)
-                cmd += " --split_depth {}".format(split_depth)
-                cmd += " --data_path data/mnist/"
+                    for key in sorted(structure_config.keys()):
+                        cmd += " --{} {}".format(key, structure_config[key])
+                    for key in sorted(config_dict.keys()):
+                        cmd += " --{} {}".format(key, config_dict[key])
 
-                for key in sorted(structure_config.keys()):
-                    cmd += " --{} {}".format(key, structure_config[key])
-                for key in sorted(config_dict.keys()):
-                    cmd += " --{} {}".format(key, config_dict[key])
+                    comb_string = ""
+                    comb_string += "split_depth_{}".format(split_depth)
+                    for key in sorted(structure_config.keys()):
+                        comb_string += "__{}_{}".format(key, structure_config[key])
+                    for key in sorted(config_dict.keys()):
+                        comb_string += "__{}_{}".format(key, config_dict[key])
+                    comb_string += "__pseudolabels_threshold_{}".format(pseudolabels_threshold)
 
-                comb_string = ""
-                comb_string += "split_depth_{}".format(split_depth)
-                for key in sorted(structure_config.keys()):
-                    comb_string += "__{}_{}".format(key, structure_config[key])
-                for key in sorted(config_dict.keys()):
-                    comb_string += "__{}_{}".format(key, config_dict[key])
+                    result_path = base_result_path + str(num_addends) + "/" + comb_string
+                    cmd += " --result_path {}".format(result_path)
 
-                result_path = base_result_path + comb_string
-                cmd += " --result_path " + result_path
+                    ###
+                    print("Configuration: {}/{}".format(current_config, total_config))
+                    print(cmd)
 
-                ###
-                print("Configuration: {}/{}".format(current_config, total_config))
-                print(cmd)
+                    utils.mkdir_p(result_path)
+                    lock_file = result_path + "/file.lock"
+                    done_file = result_path + "/file.done"
+                    lock = filelock.FileLock(lock_file)
+                    try:
+                        lock.acquire(timeout=0.1)
+                        if os.path.isfile(done_file):
+                            print("   already done -> skip")
+                        else:
+                            sys.stdout.flush()
+                            ret_val = subprocess.call(cmd, shell=True)
+                            os.system("touch {}".format(done_file))
+                        lock.release()
+                    except filelock.Timeout:
+                        print("   locked -> skip")
 
-                utils.mkdir_p(result_path)
-                lock_file = result_path + "/file.lock"
-                done_file = result_path + "/file.done"
-                lock = filelock.FileLock(lock_file)
-                try:
-                    lock.acquire(timeout=0.1)
-                    if os.path.isfile(done_file):
-                        print("   already done -> skip")
-                    else:
-                        sys.stdout.flush()
-                        ret_val = subprocess.call(cmd, shell=True)
-                        if ret_val == 7:
-                            lock.release()
-                            print("Task timed out, stop worker")
-                            sys.exit(0)
-                        os.system("touch {}".format(done_file))
-                    lock.release()
-                except filelock.Timeout:
-                    print("   locked -> skip")
-
-                current_config += 1
+                    current_config += 1
 
 
 if __name__ == '__main__':

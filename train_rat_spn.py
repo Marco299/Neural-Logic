@@ -521,6 +521,13 @@ def make_parser():
         help="Safety margin for timeout in seconds. (%(default)s)"
     )
 
+    infra_arg.add_argument(
+        '--num_addends',
+        type=int,
+        default=2,
+        help="Addends num to compute sum for MNIST dataset. (%(default)s)"
+    )
+
     #
     # preprocessing arguments
     #
@@ -728,6 +735,18 @@ def make_parser():
         help='Tradeoff factor between cross-entropy and log-likelihood. '
              'objective: (1-lambda) * log_likelihood + lambda * (kappa * cross_entropy + (1-kappa) * margin)'  
              '(%(default)s)'
+    )
+
+    #
+    # Neural-Symbolic model arguments
+    #
+    neural_symbolic = parser.add_argument_group('Neural-Symbolic Model')
+
+    spn_arg.add_argument(
+        '--pseudolabels_threshold',
+        type=float,
+        default=0.,
+        help='Threshold to select pseudolabels for training. (%(default)s)'
     )
 
     return parser

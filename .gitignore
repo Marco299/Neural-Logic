@@ -4,5 +4,9 @@ __pycache__/
 ratspn_venv/
 results/
 quick_results/
+abductions/
 scribble*.py
 *.txt
+abductions.pkl
+kmeans/
+graphics/
